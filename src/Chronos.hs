@@ -1,3 +1,5 @@
+{-# LANGUAGE DerivingVia #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# language BangPatterns #-}
 {-# language CPP #-}
 {-# language DeriveGeneric #-}
@@ -2810,7 +2812,9 @@ infix 3 ...
 -- | A day represented as the modified Julian date, the number of days
 --   since midnight on November 17, 1858.
 newtype Day = Day { getDay :: Int }
-  deriving (Show,Read,Eq,Ord,Hashable,Enum,ToJSON,FromJSON,Storable,Prim,NFData)
+  deriving (Read,Eq,Ord,Hashable,Enum,ToJSON,FromJSON,Storable,Prim,NFData)
+
+instance Show Day where show = show . dayToDate
 
 instance Torsor Day Int where
   add i (Day d) = Day (d + i)
@@ -2822,7 +2826,18 @@ _getDay f = fmap Day . f . getDay
 
 -- | The day of the week.
 newtype DayOfWeek = DayOfWeek { getDayOfWeek :: Int }
-  deriving (Show,Read,Eq,Ord,Hashable,NFData)
+  deriving (Read,Eq,Ord,Hashable,NFData)
+
+instance Show DayOfWeek where
+  show (DayOfWeek x) = case x of
+    0 -> "Sunday"
+    1 -> "Monday"
+    2 -> "Tuesday"
+    3 -> "Wednesday"
+    4 -> "Thursday"
+    5 -> "Friday"
+    6 -> "Saturday"
+    d -> "Invalid DayOfWeek " <> show d
 
 -- | a lens for accessing the `getDayOfWeek` field.
 _getDayOfWeek :: Functor f => (Int -> f Int) -> DayOfWeek -> f DayOfWeek
@@ -2846,7 +2861,23 @@ _getDayOfYear f = fmap DayOfYear . f . getDayOfYear
 
 -- | The month of the year.
 newtype Month = Month { getMonth :: Int }
-  deriving (Show,Read,Eq,Ord,Prim,NFData)
+  deriving (Read,Eq,Ord,Prim,NFData)
+
+instance Show Month where
+  show (Month x) = case x of
+    0 ->  "January"
+    1 ->  "February"
+    2 ->  "March"
+    3 ->  "April"
+    4 ->  "May"
+    5 ->  "June"
+    6 ->  "July"
+    7 ->  "August"
+    8 ->  "September"
+    9 ->  "October"
+    10 -> "November"
+    11 -> "December"
+    c  -> "Invalid Month " <> show c
 
 -- | a lens for accessing the `getMonth` field.
 _getMonth :: Functor f => (Int -> f Int) -> Month -> f Month
@@ -2871,7 +2902,9 @@ instance Bounded Month where
 -- | The number of years elapsed since the beginning
 --   of the Common Era.
 newtype Year = Year { getYear :: Int }
-  deriving (Show,Read,Eq,Ord, NFData)
+  deriving (Read,Eq,Ord, NFData)
+  deriving (Show) via Int
+
 
 -- | a lens for accessing the `getYear` field.
 _getYear :: Functor f => (Int -> f Int) -> Year -> f Year
@@ -2887,7 +2920,10 @@ _getOffset f = fmap Offset . f . getOffset
 
 -- | POSIX time with nanosecond resolution.
 newtype Time = Time { getTime :: Int64 }
-  deriving (FromJSON,ToJSON,Hashable,Eq,Ord,Show,Read,Storable,Prim,Bounded, NFData)
+  deriving (FromJSON,ToJSON,Hashable,Eq,Ord,Read,Storable,Prim,Bounded, NFData)
+
+instance Show Time where
+  show = show . timeToDatetime
 
 -- | a lens for accessing the `getTime` field.
 _getTime :: Functor f => (Int64 -> f Int64) -> Time -> f Time
@@ -2955,7 +2991,9 @@ data Date = Date
   { dateYear  :: {-# UNPACK #-} !Year
   , dateMonth :: {-# UNPACK #-} !Month
   , dateDay   :: {-# UNPACK #-} !DayOfMonth
-  } deriving (Show,Read,Eq,Ord)
+  } deriving (Read,Eq,Ord)
+
+instance Show Date where show = Text.unpack . encode_Ymd (Just '-')
 
 instance NFData Date where
   rnf (Date y m d) = y `deepseq` m `deepseq` d `deepseq` ()
@@ -3017,7 +3055,10 @@ _monthDateDay f date = fmap (\d -> date{monthDateDay = d}) . f . monthDateDay $ 
 data Datetime = Datetime
   { datetimeDate :: {-# UNPACK #-} !Date
   , datetimeTime :: {-# UNPACK #-} !TimeOfDay
-  } deriving (Show,Read,Eq,Ord)
+  } deriving (Read,Eq,Ord)
+
+instance Show Datetime where
+  show = Text.unpack . encodeIso8601
 
 instance NFData Datetime where
   rnf (Datetime d t) = d `deepseq` t `deepseq` ()
