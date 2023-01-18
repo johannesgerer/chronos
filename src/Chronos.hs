@@ -67,6 +67,7 @@ module Chronos
   , offsetDatetimeToTime
   , timeToDayTruncate
   , dayToTimeMidnight
+  , timeToTimespanSinceMidnight
   , dayToDate
   , dateToDay
   , dayToOrdinalDate
@@ -204,6 +205,7 @@ module Chronos
     -- *** UTF-8 Bytes
   , boundedBuilderUtf8BytesIso8601Zoneless
   , decodeUtf8BytesIso8601Zoneless
+  , decodeUtf8BytesIso8601ZonelessSpaced
     -- *** Short Text
   , decodeShortTextIso8601Zulu
   , decodeShortTextIso8601Zoneless
@@ -313,6 +315,21 @@ module Chronos
   , _timeOfDayHour
   , _timeOfDayMinute
   , _timeOfDayNanoseconds
+  -- * helpers
+  , addDays
+  , dayOfWeek
+  , isWeekend
+  , toDay
+  , toBaseDay
+  , fromBaseDay
+  , timeOfDayToTimeSpan
+  , toBaseUtcTime
+  , fromBaseUtcTime
+  , fromBaseUtcTime2
+  , fromBaseTimeOfDay
+  , toBaseTimeOfDay
+  , fromBaseLocalTime
+  , toBaseLocalTime
   ) where
 
 import Control.Applicative
@@ -366,6 +383,11 @@ import qualified Data.Vector.Generic as GVector
 import qualified Data.Vector.Generic.Mutable as MGVector
 import qualified Data.Vector.Primitive as PVector
 import qualified Data.Vector.Unboxed as UVector
+import qualified Data.Time.Calendar as D
+import qualified Data.Time.LocalTime as D
+import qualified Data.Time.Clock as D
+import qualified Data.String as S
+import qualified Data.Fixed as F
 
 #ifdef mingw32_HOST_OS
 import System.Win32.Time (SYSTEMTIME(..))
@@ -497,6 +519,8 @@ offsetDatetimeToTime = fromUtc . offsetDatetimeToUtcTime
 
 -- | Convert 'Time' to 'Day'. This function is lossy; consequently, it
 --   does not roundtrip with 'dayToTimeMidnight'.
+--
+-- see also `timeToTimespanSinceMidnight`
 timeToDayTruncate :: Time -> Day
 timeToDayTruncate (Time i) = Day (fromIntegral (div i 86400000000000) + 40587)
 
@@ -3411,7 +3435,7 @@ timeParts o0 t0 =
 -- by either @Z@ or @+00:00@ or @+00@.
 decodeShortTextIso8601Zulu :: ShortText -> Maybe Chronos.Datetime
 decodeShortTextIso8601Zulu !t = BVP.parseBytesMaybe
-  ( do d <- parserUtf8BytesIso8601Zoneless
+  ( do d <- parserUtf8BytesIso8601Zoneless 'T'
        remaining <- BVP.remaining
        case Bytes.length remaining of
          1 | Bytes.unsafeIndex remaining 0 == 0x5A -> pure d
@@ -3433,17 +3457,25 @@ decodeShortTextIso8601 :: ShortText -> Maybe Chronos.OffsetDatetime
 decodeShortTextIso8601 !t = decodeUtf8BytesIso8601
   (Bytes.fromShortByteString (TS.toShortByteString t))
 
+-- | Decode an ISO-8601-encode datetime.
 decodeUtf8BytesIso8601Zoneless :: Bytes -> Maybe Chronos.Datetime
 decodeUtf8BytesIso8601Zoneless !b =
-  BVP.parseBytesMaybe (parserUtf8BytesIso8601Zoneless <* BVP.endOfInput ()) b
+  BVP.parseBytesMaybe (parserUtf8BytesIso8601Zoneless 'T' <* BVP.endOfInput ()) b
+
+-- | Decode a datetime that is nearly ISO-8601-encoded but uses a space
+-- instead of a T to separate the date and the time. For example:
+-- @2022-10-29 14:00:05@.
+decodeUtf8BytesIso8601ZonelessSpaced :: Bytes -> Maybe Chronos.Datetime
+decodeUtf8BytesIso8601ZonelessSpaced !b =
+  BVP.parseBytesMaybe (parserUtf8BytesIso8601Zoneless ' ' <* BVP.endOfInput ()) b
 
 decodeUtf8BytesIso8601 :: Bytes -> Maybe Chronos.OffsetDatetime
 decodeUtf8BytesIso8601 !b =
   BVP.parseBytesMaybe (parserUtf8BytesIso8601 <* BVP.endOfInput ()) b
 
-parserUtf8BytesIso8601Zoneless :: BVP.Parser () s Chronos.Datetime
+parserUtf8BytesIso8601Zoneless :: Char -> BVP.Parser () s Chronos.Datetime
 {-# noinline parserUtf8BytesIso8601Zoneless #-}
-parserUtf8BytesIso8601Zoneless = do
+parserUtf8BytesIso8601Zoneless !sep = do
   year <- Latin.decWord ()
   Latin.char () '-'
   month' <- Latin.decWord ()
@@ -3456,7 +3488,7 @@ parserUtf8BytesIso8601Zoneless = do
         (Chronos.Year (fromIntegral year))
         (Chronos.Month (fromIntegral month))
         (Chronos.DayOfMonth (fromIntegral dayWord))
-  Latin.char () 'T'
+  Latin.char () sep
   hourWord <- Latin.decWord8 ()
   when (hourWord > 23) (BVP.fail ())
   Latin.char () ':'
@@ -3492,7 +3524,7 @@ parserUtf8BytesIso8601Zoneless = do
 parserUtf8BytesIso8601 :: BVP.Parser () s Chronos.OffsetDatetime
 {-# noinline parserUtf8BytesIso8601 #-}
 parserUtf8BytesIso8601 = do
-  dt <- parserUtf8BytesIso8601Zoneless
+  dt <- parserUtf8BytesIso8601Zoneless 'T'
   off <- Latin.any () >>= \case
     'Z' -> pure 0
     '+' -> parserBytesOffset
@@ -3597,3 +3629,82 @@ boundedBuilderOffset (Offset mins) = case mins of
         Bounded.ascii ':'
         `Bounded.append`
         Bounded.wordPaddedDec2 absMinutes
+
+-- * helpers
+
+addDays :: Int -> Day -> Day
+addDays = add
+
+dayOfWeek :: Day -> DayOfWeek
+dayOfWeek = DayOfWeek . flip mod 7 . (+ 3) . getDay
+
+isWeekend :: Day -> Bool
+isWeekend (Day d) = let x = mod d 7 in x == 3 || x == 4
+
+toDay :: Year -> Month -> DayOfMonth -> Day
+toDay y m = dateToDay . Date y m
+
+
+toBaseDay :: Day -> D.Day
+toBaseDay = D.ModifiedJulianDay . fromIntegral . getDay
+
+fromBaseDay :: D.Day -> Day
+fromBaseDay x | i == fromIntegral y     = Day y
+              | True                    = error $ "date " <> show x <> "outside of int range"
+  where i = D.toModifiedJulianDay x :: Integer
+        y = fromIntegral i :: Int
+
+instance S.IsString Date where
+  fromString  = either error id . AT.parseOnly (parser_Ymd_lenient <* AT.endOfInput) . Text.pack
+
+instance S.IsString Day where
+  fromString  = dateToDay . S.fromString
+
+instance S.IsString TimeOfDay where
+  fromString  = either error id . AT.parseOnly (parser_HMS_opt_S (Just ':') <* AT.endOfInput) . Text.pack
+
+instance S.IsString Datetime where
+  fromString  = either error id . AT.parseOnly (parser_YmdHMS_opt_S_lenient <* AT.endOfInput) . Text.pack
+
+instance S.IsString Time where
+  fromString  = datetimeToTime . S.fromString
+
+
+timeOfDayToTimeSpan :: TimeOfDay -> Timespan
+timeOfDayToTimeSpan (TimeOfDay h m ns) = Timespan $ (fromIntegral h * 60 + fromIntegral m) * nanosecondsInMinute + ns
+
+fromBaseTimeOfDay :: D.TimeOfDay -> TimeOfDay
+fromBaseTimeOfDay (D.TimeOfDay h m (F.MkFixed picos)) = TimeOfDay h m $ fromInteger $ picos `div` 1000
+
+toBaseTimeOfDay :: TimeOfDay -> D.TimeOfDay
+toBaseTimeOfDay (TimeOfDay h m nanos) = D.TimeOfDay h m (F.MkFixed $ toInteger nanos * 1000)
+
+
+toBaseUtcTime :: Time -> D.UTCTime
+toBaseUtcTime = g . toUtc
+  where g (UtcTime d p) = D.UTCTime (toBaseDay d) $ D.picosecondsToDiffTime $ 1000 * fromIntegral p
+
+fromBaseUtcTime' :: D.UTCTime -> UtcTime
+fromBaseUtcTime' (D.UTCTime d p) = UtcTime (fromBaseDay d)
+  $ fromIntegral $ D.diffTimeToPicoseconds p `div` 1000
+
+fromBaseUtcTime :: D.UTCTime -> Time
+fromBaseUtcTime = fromUtc . fromBaseUtcTime'
+
+fromBaseUtcTime2 :: D.UTCTime -> Datetime
+fromBaseUtcTime2 = utcTimeToDatetime . fromBaseUtcTime'
+
+
+fromBaseLocalTime :: D.LocalTime -> Time
+fromBaseLocalTime (D.LocalTime d t) = add (timeOfDayToTimeSpan $ fromBaseTimeOfDay t) $ dayToTimeMidnight $ fromBaseDay d
+
+toBaseLocalTime :: Time -> D.LocalTime
+toBaseLocalTime = D.utcToLocalTime D.utc . toBaseUtcTime
+
+
+-- | it holds:
+--
+-- t == add (timeToTimespanSinceMidnight t) (dayToTimeMidnight $ timeToDayTruncate t)
+timeToTimespanSinceMidnight :: Time -> Timespan
+timeToTimespanSinceMidnight (Time t) = Timespan $ mod t  dayLengthInt64
+

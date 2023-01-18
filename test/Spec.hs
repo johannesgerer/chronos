@@ -389,6 +389,18 @@ tests =
           (LText.toStrict . Builder.toLazyText . C.builder_YmdHMS (SubsecondPrecisionFixed 9) (DatetimeFormat Nothing Nothing Nothing))
           (either (const Nothing) Just . Atto.parseOnly (C.parser_YmdHMS (DatetimeFormat Nothing Nothing Nothing)))
       ]
+    , testProperty "ISO-8601 Roundtrip" $ propEncodeDecodeIso
+        C.encodeShortTextIso8601Zulu
+        (\input -> case C.decodeShortTextIso8601 input of
+          Just (OffsetDatetime dt (Offset 0)) -> Just dt
+          _ -> Nothing
+        )
+    , testProperty "ISO-8601 Zoneless Roundtrip" $ propEncodeDecodeIso
+        C.encodeShortTextIso8601Zoneless
+        (\input -> case C.decodeShortTextIso8601Zoneless input of
+          Just dt -> Just dt
+          _ -> Nothing
+        )
     ]
   , testGroup "Offset Datetime"
     [ testGroup "Builder Spec Tests" $
@@ -407,12 +419,6 @@ tests =
         (\(offsetFormat,datetimeFormat) input ->
             either (const Nothing) Just $ flip Atto.parseOnly input $
               C.parser_YmdHMSz offsetFormat datetimeFormat
-        )
-    , testProperty "ISO-8601 Roundtrip" $ propEncodeDecodeIso
-        C.encodeShortTextIso8601Zulu
-        (\input -> case C.decodeShortTextIso8601 input of
-          Just (OffsetDatetime dt (Offset 0)) -> Just dt
-          _ -> Nothing
         )
     ]
   , testGroup "Posix Time"
@@ -491,6 +497,15 @@ tests =
       (C.timeToDayOfWeek (Time (-17308800000000000)) @?= DayOfWeek 6)
     , PH.testCase "Tuesday, June 6, 1944 4:00:00 PM"
       (C.timeToDayOfWeek (Time (-806918400000000000)) @?= DayOfWeek 2)
+    ]
+  , testGroup "timeToOffsetDatetime"
+    [ PH.testCase "EpochNeg4h"
+      (C.timeToOffsetDatetime (Offset (-240)) (Time 0) @?= OffsetDatetime
+        ( Datetime
+          ( Date (Year 1969) C.december (DayOfMonth 31) )
+          ( TimeOfDay 20 0 0 )
+        ) (Offset (-240))
+      )
     ]
   , testGroup "json"
     [ PH.testCase "Datetime" $

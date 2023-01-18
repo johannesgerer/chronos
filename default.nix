@@ -1,5 +1,5 @@
 # -*- compile-command: "nix-shell --run 'cabal exec -- ghc-pkg list'"; -*-
-{ pkgs ? import <nixpkgs> {} }:
+{ pkgs ? import (import ./nix/sources.nix {}).nixpkgs {}, sources ? import ./nix/sources.nix {} }:
   # https://github.com/NixOS/nixpkgs/blob/master/pkgs/development/haskell-modules/make-package-set.nix
 pkgs.haskellPackages.developPackage {
     root = ./.;
